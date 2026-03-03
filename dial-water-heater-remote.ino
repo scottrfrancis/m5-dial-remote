@@ -6,12 +6,12 @@ Water Heater temp monitor and remote recirc control
 
 */
 
-#include <ArduinoJson.h>  // at the top of your sketch
+#include <ArduinoJson.h>
 #include <M5Dial.h>
 #include <PubSubClient.h>
 #include <WiFi.h>
 
-#include "environment.h"  
+#include "environment.h"
 
 
 // MQTT broker info
@@ -25,8 +25,16 @@ bool pumpRunning = false;
 unsigned long lastFrameTime = 0;
 int colorWheelAngle = 0;
 
+// Connection resilience state
+unsigned long lastWifiCheck = 0;
+unsigned long lastMqttAttempt = 0;
+unsigned long mqttRetryInterval = 2000;
+const unsigned long MQTT_MAX_RETRY = 30000;
+const unsigned long WIFI_CHECK_INTERVAL = 5000;
+bool wifiConnected = false;
+bool mqttConnected = false;
+
 void startColorWheel() {
-  // pumpRunning = true;
   colorWheelAngle = 0;
   lastFrameTime = millis();
 }
@@ -37,13 +45,10 @@ void drawColorWheelFrame(int angleOffset) {
   int r1 = 83;
   int r2 = 87;
 
-  // No clearing — draw over existing arc
-
   for (int i = 0; i < 360; i += 10) {
     int angleStart = (i + angleOffset) % 360;
     int angleEnd   = (i + 10 + angleOffset) % 360;
 
-    // Fixed hue for each segment
     float hue = i / 360.0f;
     uint8_t r, g, b;
 
@@ -65,7 +70,6 @@ void drawColorWheelFrame(int angleOffset) {
 
     uint16_t color = M5Dial.Display.color565(r, g, b);
 
-    // Handle wrap-around
     if (angleEnd < angleStart) {
       M5Dial.Display.fillArc(cx, cy, r1, r2, angleStart, 360, color);
       M5Dial.Display.fillArc(cx, cy, r1, r2, 0, angleEnd, color);
@@ -76,30 +80,32 @@ void drawColorWheelFrame(int angleOffset) {
 }
 
 void drawTempArc(float tempF) {
-  // Clamp and map temp (e.g., 90°F–140°F maps to 0–270°)
   float clamped = constrain(tempF, 90.0, 140.0);
   int angle = map(clamped, 90, 140, 0, 270);
 
-  // Define arc appearance
   int centerX = 120;
   int centerY = 120;
   int radius = 100;
   int thickness = 10;
 
-  // Choose color based on temp
   uint16_t arcColor = (tempF < 100) ? BLUE : (tempF < 120) ? YELLOW : RED;
 
-  // Draw arc using M5GFX
   M5Dial.Display.fillArc(centerX, centerY, radius - thickness, radius, 135, 135 + angle, arcColor);
 }
 
+void drawStatusMessage(const char *msg) {
+  M5Dial.Display.clearDisplay();
+  M5Dial.Display.setTextColor(YELLOW);
+  M5Dial.Display.setTextSize(1);
+  M5Dial.Display.drawString(msg, 120, 120);
+}
+
 float currentTempF = 50.0;
-// Callback when a message is received
+
 void callback(char* topic, byte* payload, unsigned int length) {
-  payload[length] = '\0';  // Null-terminate the payload
+  payload[length] = '\0';
   Serial.printf("Message arrived [%s]: %s\n", topic, payload);
 
-  // Parse JSON
   StaticJsonDocument<128> doc;
   DeserializationError error = deserializeJson(doc, payload);
 
@@ -109,14 +115,13 @@ void callback(char* topic, byte* payload, unsigned int length) {
     return;
   }
 
-  // extract payload and update internal state vars/gobals
   if (strcmp(topic, temp_topic) == 0) {
     currentTempF = doc["temp_degF"];
   } else if (strcmp(topic, pump_topic) == 0) {
     const char* pumpState = doc["pump"];
     if (pumpState && strcmp(pumpState, "on") == 0) {
       if (pumpRunning == false) {
-        startColorWheel();  // Start the animation
+        startColorWheel();
       }
       pumpRunning = true;
     }
@@ -126,25 +131,22 @@ void callback(char* topic, byte* payload, unsigned int length) {
   }
 }
 
-// Connect to MQTT broker
-void reconnect() {
-  while (!client.connected()) {
-    Serial.print("Attempting MQTT connection...");
-    // Create a random client ID
-    String clientId = "M5DialClient-";
-    clientId += String(random(0xffff), HEX);
-    
-    if (client.connect(clientId.c_str())) {
-      Serial.println("connected");
-      client.subscribe(temp_topic);
-      client.subscribe(pump_topic);
-    } else {
-      Serial.print("failed, rc=");
-      Serial.print(client.state());
-      Serial.println(" try again in 2 seconds");
-      delay(2000);
-    }
+// Non-blocking MQTT reconnect — single attempt per call
+bool mqttReconnect() {
+  Serial.print("Attempting MQTT connection...");
+  String clientId = "M5DialClient-";
+  clientId += String(random(0xffff), HEX);
+
+  if (client.connect(clientId.c_str())) {
+    Serial.println("connected");
+    client.subscribe(temp_topic);
+    client.subscribe(pump_topic);
+    mqttRetryInterval = 2000;  // Reset backoff on success
+    return true;
   }
+
+  Serial.printf("failed, rc=%d\n", client.state());
+  return false;
 }
 
 void setup() {
@@ -158,16 +160,16 @@ void setup() {
 
   Serial.begin(115200);
 
-  const char *conn_msg = "Connecting WiFi";
-  Serial.print(conn_msg);
-  M5Dial.Display.drawString(conn_msg, M5Dial.Display.width() / 2,
-                            M5Dial.Display.height() / 2);
+  // Blocking WiFi connect on first boot — device needs network to function
+  drawStatusMessage("Connecting WiFi");
+  Serial.print("Connecting WiFi");
 
   WiFi.begin(ssid, password);
   while (WiFi.status() != WL_CONNECTED) {
-      delay(500);
-      Serial.print(".");
+    delay(500);
+    Serial.print(".");
   }
+  wifiConnected = true;
   Serial.println("Connected!");
   IPAddress ip = WiFi.localIP();
   Serial.println(ip);
@@ -185,54 +187,100 @@ float lastTempF = -999;
 bool lastPumpRunning = false;
 
 void loop() {
-  // put your main code here, to run repeatedly:
-  if (!client.connected()) {
-    reconnect();
-  }
-  client.loop();
+  unsigned long now = millis();
   M5Dial.update();
 
-  // Redraw 
-  bool shouldRedraw = false;
+  // --- WiFi resilience: check periodically, reconnect non-blocking ---
+  if (now - lastWifiCheck >= WIFI_CHECK_INTERVAL) {
+    lastWifiCheck = now;
+    bool currentWifiStatus = (WiFi.status() == WL_CONNECTED);
 
-  // Check if temperature or pump state changed
+    if (!currentWifiStatus && wifiConnected) {
+      // WiFi just dropped
+      wifiConnected = false;
+      Serial.println("WiFi disconnected — attempting reconnect");
+      drawStatusMessage("WiFi lost...");
+      WiFi.reconnect();
+    } else if (!currentWifiStatus && !wifiConnected) {
+      // Still disconnected — retry
+      Serial.println("WiFi still disconnected — retrying");
+      WiFi.reconnect();
+    } else if (currentWifiStatus && !wifiConnected) {
+      // WiFi just recovered
+      wifiConnected = true;
+      Serial.println("WiFi reconnected");
+      Serial.println(WiFi.localIP());
+    }
+  }
+
+  // --- MQTT resilience: non-blocking reconnect with exponential backoff ---
+  if (wifiConnected && !client.connected()) {
+    if (mqttConnected) {
+      // MQTT just dropped
+      mqttConnected = false;
+      Serial.println("MQTT disconnected");
+    }
+    if (now - lastMqttAttempt >= mqttRetryInterval) {
+      lastMqttAttempt = now;
+      if (mqttReconnect()) {
+        mqttConnected = true;
+      } else {
+        // Exponential backoff, capped
+        mqttRetryInterval = min(mqttRetryInterval * 2, MQTT_MAX_RETRY);
+        Serial.printf("MQTT retry in %lu ms\n", mqttRetryInterval);
+      }
+    }
+    // Show status while disconnected, then return to skip normal drawing
+    if (!mqttConnected) {
+      drawStatusMessage("MQTT...");
+      return;
+    }
+  } else if (wifiConnected && client.connected() && !mqttConnected) {
+    mqttConnected = true;
+  }
+
+  if (!wifiConnected) {
+    return;  // Skip everything until WiFi is back
+  }
+
+  client.loop();
+
+  // --- Redraw logic ---
+  bool stateChanged = false;
+
   if (abs(currentTempF - lastTempF) >= 0.1 || pumpRunning != lastPumpRunning) {
-    shouldRedraw = true;
+    stateChanged = true;
     lastTempF = currentTempF;
     lastPumpRunning = pumpRunning;
   }
 
-  // Also redraw if animation needs a new frame
-  unsigned long now = millis();
-  if (pumpRunning && (now - lastFrameTime > 50)) {
-    colorWheelAngle = (colorWheelAngle + 8) % 360;
-    lastFrameTime = now;
-    // shouldRedraw = true;
-  }
-
-  if (shouldRedraw) {
-    // Clear screen once per update cycle
+  // Full redraw on state change (clear + repaint everything)
+  if (stateChanged) {
     M5Dial.Display.clearDisplay();
-  }
-    // Draw temp text
+
     M5Dial.Display.setTextColor(GREEN);
     M5Dial.Display.setTextSize(2);
     int tempWhole = static_cast<int>(round(currentTempF));
     M5Dial.Display.drawString(String(tempWhole) + " F", 120, 120);
 
-    // Draw temp arc
     drawTempArc(currentTempF);
 
-    // Draw pump animation ring, if active
     if (pumpRunning) {
       drawColorWheelFrame(colorWheelAngle);
     }
-  // }
+  }
+
+  // Animation frame update — color wheel draws over itself without clearing,
+  // so no clearDisplay() needed here (avoids full-screen flicker at 20fps)
+  if (pumpRunning && (now - lastFrameTime > 50)) {
+    colorWheelAngle = (colorWheelAngle + 8) % 360;
+    lastFrameTime = now;
+    drawColorWheelFrame(colorWheelAngle);
+  }
 
   if (M5Dial.BtnA.wasPressed()) {
     Serial.println("Button pressed — sending start command");
 
-    // Build and publish payload
     StaticJsonDocument<64> doc;
     doc["start"] = 5;
 
@@ -244,7 +292,6 @@ void loop() {
 
       M5Dial.Display.clearDisplay();
       M5Dial.Display.drawString("Recirc", 120, 120);
-      // delay(500);  // Brief pause to show feedback
     } else {
       Serial.println("MQTT publish failed");
     }
