@@ -7,16 +7,16 @@
 
 #include <M5Dial.h>
 #include "environment.h"
-#include "Config.h"
-#include "ConnectivityManager.h"
-#include "DisplayManager.h"
-#include "Navigator.h"
-#include "InputEvent.h"
+#include "src/Config.h"
+#include "src/InputEvent.h"
+#include "src/core/ConnectivityManager.h"
+#include "src/core/DisplayManager.h"
+#include "src/core/Navigator.h"
 
-#include "WaterHeaterView.h"
-#include "FanView.h"
-#include "LightView.h"
-#include "SettingsView.h"
+#include "src/views/WaterHeaterView.h"
+#include "src/views/FanView.h"
+#include "src/views/LightView.h"
+#include "src/views/SettingsView.h"
 
 // --- Static view instances (no dynamic allocation) ---
 static WaterHeaterView waterHeaterView;

@@ -1,6 +1,6 @@
 #include "DisplayManager.h"
-#include "Config.h"
-#include "Graphics.h"
+#include "../Config.h"
+#include "../gfx/Graphics.h"
 
 void DisplayManager::begin() {
   M5Dial.Display.setFont(&fonts::Orbitron_Light_24);

@@ -63,7 +63,7 @@ When the device crashes with a `Guru Meditation Error`, decode the backtrace usi
 
 ```sh
 /Users/scottfrancis/Library/Arduino15/packages/m5stack/tools/esp-x32/2411/bin/xtensa-esp32s3-elf-addr2line \
-  -pfiaC -e /tmp/dial-build/dial-water-heater-remote.ino.elf \
+  -pfiaC -e /tmp/dial-build/m5-dial-remote.ino.elf \
   0xADDR1 0xADDR2 0xADDR3
 ```
 
@@ -84,7 +84,7 @@ Requires the ELF from a `--output-dir` build. Always build with `--output-dir` w
 - **M5GFX:** No `getTextSize()` method. Don't try to save/restore text size — just set directly.
 - **WiFi after rapid flashing:** Can get stuck. Power cycle the device (unplug USB, wait, replug).
 - **USB port name:** Can change between `/dev/cu.usbmodem*` and `/dev/cu.usbserial-*` after reboot. Always `ls /dev/cu.usb*` first.
-- **Arduino IDE layout:** All source files must be in the project root. No `src/` subdirectory.
+- **Arduino src/ layout:** Source files live in `src/` with subdirectories (`core/`, `gfx/`, `views/`). The `.ino` must stay in the project root. Cross-directory includes use relative paths (`../Config.h`, `../core/DisplayManager.h`).
 
 ## Credentials
 
@@ -94,12 +94,12 @@ Requires the ELF from a `--output-dir` build. Always build with `--output-dir` w
 
 ## File Structure
 
-All `.h/.cpp` in project root (Arduino IDE requirement). See `docs/DESIGN.md` for the full file layout and architecture.
+Source files organized under `src/` with subdirectories: `core/` (subsystems), `gfx/` (drawing), `views/` (device views). Shared headers (`Config.h`, `InputEvent.h`, `DeviceView.h`) in `src/` root. The `.ino` coordinator stays in the project root. See `docs/DESIGN.md` for the full layout.
 
 ## Adding a New Device View
 
-1. Create `NewDeviceView.h` / `NewDeviceView.cpp` implementing `DeviceView`
-2. `#include` it in the `.ino`
+1. Create `src/views/NewDeviceView.h` / `.cpp` implementing `DeviceView`
+2. `#include "src/views/NewDeviceView.h"` in the `.ino`
 3. Add a `static NewDeviceView` instance
 4. Add its pointer to the `views[]` array
 5. No framework changes needed (Open/Closed principle)
@@ -108,4 +108,3 @@ All `.h/.cpp` in project root (Arduino IDE requirement). See `docs/DESIGN.md` fo
 
 - `main` is the deployed firmware branch
 - Feature work on `feature/*` branches
-- Current feature branch: `feature/multi-device-refactor`

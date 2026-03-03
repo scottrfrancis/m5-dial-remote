@@ -23,23 +23,31 @@ This refactor decomposes the monolith into focused modules using a **coordinator
 ## File Layout
 
 ```
-dial-water-heater-remote/
-  dial-water-heater-remote.ino   # setup() + loop() — ~70 lines, wires subsystems
-  environment.h                  # WiFi/MQTT credentials (gitignored, unchanged)
-  Config.h                       # All compile-time constants (replaces magic numbers)
-  InputEvent.h                   # Input event enum + struct (header-only)
-  DeviceView.h                   # Abstract base class (header-only)
-  DisplayManager.h / .cpp        # Shared display: overlays, page dots, convenience methods
-  Graphics.h / .cpp              # Reusable drawing primitives (arcs, color wheel, arrows)
-  ConnectivityManager.h / .cpp   # WiFi + MQTT lifecycle, reconnect, exponential backoff
-  Navigator.h / .cpp             # Swipe detection, view switching, page index
-  WaterHeaterView.h / .cpp       # Water heater — port of existing logic
-  FanView.h / .cpp               # Ceiling fan (new)
-  LightView.h / .cpp             # Light with modal encoder (new)
-  SettingsView.h / .cpp          # Settings (local-only, no MQTT)
+m5-dial-remote/
+  m5-dial-remote.ino             # Coordinator — setup() + loop()
+  environment.h                  # WiFi/MQTT credentials (gitignored)
+  environment.h.example          # Credential template
+  src/
+    Config.h                     # Compile-time constants
+    InputEvent.h                 # Input event enum + struct
+    DeviceView.h                 # Abstract base class
+    core/
+      ConnectivityManager.h/.cpp # WiFi + MQTT lifecycle, exponential backoff
+      DisplayManager.h/.cpp      # Display wrapper, overlays, page dots
+      Navigator.h/.cpp           # Swipe detection, view switching
+    gfx/
+      Graphics.h/.cpp            # Drawing primitives (arcs, color wheel, arrows)
+    views/
+      WaterHeaterView.h/.cpp     # Water heater temp + pump control
+      FanView.h/.cpp             # Ceiling fan speed + direction
+      LightView.h/.cpp           # Light brightness + color temp (modal encoder)
+      SettingsView.h/.cpp        # Display brightness (local-only, no MQTT)
+  docs/
+    DESIGN.md
+    IDEA.md
 ```
 
-All files in project root (Arduino IDE requirement — no nested `src/`).
+The `.ino` must remain in the project root (Arduino requirement). Source files in `src/` are compiled recursively by arduino-cli. Cross-directory includes use relative paths (e.g. `../Config.h`, `../core/DisplayManager.h`).
 
 ---
 
@@ -257,14 +265,15 @@ Each view does `strcmp()` on its own topics and returns `true` if handled. Linea
 ```cpp
 #include <M5Dial.h>
 #include "environment.h"
-#include "Config.h"
-#include "ConnectivityManager.h"
-#include "DisplayManager.h"
-#include "Navigator.h"
-#include "WaterHeaterView.h"
-#include "FanView.h"
-#include "LightView.h"
-#include "SettingsView.h"
+#include "src/Config.h"
+#include "src/InputEvent.h"
+#include "src/core/ConnectivityManager.h"
+#include "src/core/DisplayManager.h"
+#include "src/core/Navigator.h"
+#include "src/views/WaterHeaterView.h"
+#include "src/views/FanView.h"
+#include "src/views/LightView.h"
+#include "src/views/SettingsView.h"
 
 static WaterHeaterView waterHeaterView;
 static FanView         fanView;

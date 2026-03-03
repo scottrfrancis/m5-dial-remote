@@ -3,9 +3,9 @@
 #include <ArduinoJson.h>
 #include <PubSubClient.h>
 
-#include "DeviceView.h"
-#include "DisplayManager.h"
-#include "InputEvent.h"
+#include "../DeviceView.h"
+#include "../core/DisplayManager.h"
+#include "../InputEvent.h"
 
 // ---------------------------------------------------------------------------
 // WaterHeaterView — displays water heater temperature and recirculation pump

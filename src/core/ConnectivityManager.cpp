@@ -1,5 +1,5 @@
 #include "ConnectivityManager.h"
-#include "DeviceView.h"
+#include "../DeviceView.h"
 
 // ---------------------------------------------------------------------------
 // Public API

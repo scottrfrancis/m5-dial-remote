@@ -1,7 +1,7 @@
 #pragma once
 #include <WiFi.h>
 #include <PubSubClient.h>
-#include "Config.h"
+#include "../Config.h"
 
 class DeviceView;
 

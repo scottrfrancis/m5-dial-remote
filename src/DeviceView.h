@@ -1,6 +1,6 @@
 #pragma once
 #include <PubSubClient.h>
-#include "InputEvent.h"
+#include "InputEvent.h"  // same directory (src/)
 
 class DisplayManager;  // forward declaration
 

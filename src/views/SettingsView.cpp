@@ -3,9 +3,9 @@
 #include <Arduino.h>
 #include <M5Dial.h>
 
-#include "Config.h"
-#include "DisplayManager.h"
-#include "Graphics.h"
+#include "../Config.h"
+#include "../core/DisplayManager.h"
+#include "../gfx/Graphics.h"
 
 // ---------------------------------------------------------------------------
 // MQTT — no topics owned by this view

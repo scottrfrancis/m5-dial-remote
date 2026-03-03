@@ -1,5 +1,5 @@
 #include "Navigator.h"
-#include "DisplayManager.h"
+#include "DisplayManager.h"  // same directory (core/)
 #include <M5Dial.h>
 
 // ---------------------------------------------------------------------------

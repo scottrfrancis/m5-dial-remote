@@ -1,6 +1,6 @@
 #pragma once
-#include "DeviceView.h"
-#include "Config.h"
+#include "../DeviceView.h"
+#include "../Config.h"
 #include <cstdint>
 
 class DisplayManager;

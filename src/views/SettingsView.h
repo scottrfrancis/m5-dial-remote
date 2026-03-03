@@ -1,8 +1,8 @@
 #pragma once
 
-#include "DeviceView.h"
-#include "DisplayManager.h"
-#include "InputEvent.h"
+#include "../DeviceView.h"
+#include "../core/DisplayManager.h"
+#include "../InputEvent.h"
 
 // ---------------------------------------------------------------------------
 // SettingsView — local-only settings page (no MQTT interaction).
