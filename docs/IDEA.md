@@ -159,6 +159,24 @@ automation:
 
 The water heater automations already exist and follow this same pattern.
 
+## Settings View
+
+A dedicated settings page accessible by swiping to the last position in the view array.
+
+### Brightness Control
+
+The M5Stack Dial has no ambient light sensor — display brightness must be set manually via `M5Dial.Display.setBrightness(0-255)`.
+
+- **Rotary encoder**: Adjust brightness (0–255)
+- **Display**: Brightness percentage centered, with a value arc showing current level
+- Brightness persists in RAM for the session (resets to default on power cycle)
+
+Future settings candidates: MQTT broker display, WiFi signal strength, device reorder, sleep timeout.
+
+### MQTT Topics
+
+None — settings are local to the device.
+
 ## Future Device Ideas
 
 The pattern is always the same: HA integration + MQTT bridge automations + Dial view.
@@ -170,9 +188,9 @@ The pattern is always the same: HA integration + MQTT bridge automations + Dial 
 
 ## Navigation and UX
 
-Swipe left/right on the touchscreen to cycle between three views:
+Swipe left/right on the touchscreen to cycle between four views:
 
-**Water Heater → Fan → Light**
+**Water Heater → Fan → Light → Settings**
 
 Page indicator dots at the bottom of the screen show current position (like iOS).
 
@@ -201,3 +219,10 @@ Implementation: detect horizontal flick via `M5Dial.Touch.getDetail()` → `wasF
 - **Display**:
   - Brightness level arc or fill indicator
   - Color temperature indicator (warm/cool) when in adjustment mode
+
+### Settings View
+
+- **Rotary encoder**: Adjust display brightness (0–255)
+- **Display**: Brightness percentage centered, value arc showing current level
+- No MQTT interaction — all settings are local to the device
+- Future candidates: MQTT broker info, WiFi signal strength, sleep timeout
