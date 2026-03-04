@@ -12,7 +12,8 @@ public:
   // Does NOT attempt MQTT connection — that's deferred to tick().
   // Returns the assigned IP address so the caller can display it.
   IPAddress beginBlocking(const char* ssid, const char* password,
-                          const char* broker, uint16_t port);
+                          const char* broker, uint16_t port,
+                          long gmtOffset_sec = 0, int dstOffset_sec = 0);
 
   // Non-blocking tick. Call every loop() iteration.
   // Returns true if MQTT is connected and normal operation should proceed.

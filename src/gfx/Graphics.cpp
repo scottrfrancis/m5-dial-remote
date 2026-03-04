@@ -178,6 +178,49 @@ void drawPageDots(M5GFX&  gfx,
 }
 
 // ---------------------------------------------------------------------------
+// drawSpeedBars
+//
+// Six vertical bars representing fan speed 1–6. Bars up to the current speed
+// are filled with a direction-dependent color gradient; remaining bars are
+// drawn as dark gray outlines.
+//
+// Forward/UP:   green (speed 1) → red (speed 6)    HSV hue 0.333 → 0.0
+// Reverse/DOWN: blue (speed 1) → yellow (speed 6)  HSV hue 0.667 → 0.167
+// ---------------------------------------------------------------------------
+void drawSpeedBars(M5GFX&  gfx,
+                   uint8_t speed,
+                   bool    dirForward,
+                   int     cx,
+                   int     cy,
+                   int     barW,
+                   int     barH,
+                   int     gap) {
+  constexpr int N = 6;
+  int totalW = N * barW + (N - 1) * gap;
+  int x0 = cx - totalW / 2;
+  int y0 = cy - barH / 2;
+
+  for (int i = 0; i < N; i++) {
+    int x = x0 + i * (barW + gap);
+    bool filled = (speed > 0) && (i < static_cast<int>(speed));
+
+    if (filled) {
+      float hue;
+      if (dirForward) {
+        hue = 0.333f * (1.0f - float(i) / float(N - 1));
+      } else {
+        hue = 0.667f - float(i) / float(N - 1) * 0.5f;
+      }
+      uint16_t color = hsvToRgb565(hue, 1.0f, 1.0f);
+      gfx.fillRect(x, y0, barW, barH, color);
+    } else {
+      constexpr uint16_t OUTLINE = 0x4208;
+      gfx.drawRect(x, y0, barW, barH, OUTLINE);
+    }
+  }
+}
+
+// ---------------------------------------------------------------------------
 // drawArrow
 //
 // Draw a simple filled triangle arrow centered at (cx, cy).

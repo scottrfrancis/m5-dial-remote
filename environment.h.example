@@ -24,3 +24,9 @@ const char *mqtt_server = "192.168.1.100";
 // #define TOPIC_FAN_CMD       "fan/bedroom/command"
 // #define TOPIC_LIGHT_STATE   "fan/bedroom/light"
 // #define TOPIC_LIGHT_CMD     "light/bedroom/command"
+
+// NTP time zone configuration
+// GMT offset in seconds: UTC-8 = -28800, UTC-7 = -25200, UTC-5 = -18000, UTC+0 = 0
+const long tz_offset_sec  = -25200;   // Mountain Standard Time
+// Daylight saving time offset in seconds (3600 = 1 hour, 0 = no DST)
+const int  dst_offset_sec = 3600;
