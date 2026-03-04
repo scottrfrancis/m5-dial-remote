@@ -6,6 +6,7 @@
 #include "../DeviceView.h"
 #include "../core/DisplayManager.h"
 #include "../InputEvent.h"
+#include "../MqttTopics.h"
 
 // ---------------------------------------------------------------------------
 // FanView — controls a bedroom ceiling fan via MQTT through Home Assistant.
@@ -32,13 +33,18 @@ public:
   void update(unsigned long now, DisplayManager& display) override;
 
 private:
-  // MQTT topics
-  static constexpr const char* TOPIC_STATE = "fan/bedroom/state";
-  static constexpr const char* TOPIC_CMD   = "fan/bedroom/command";
+  // MQTT topics (defaults in MqttTopics.h, overridable in environment.h)
+  static constexpr const char* TOPIC_STATE = TOPIC_FAN_STATE;
+  static constexpr const char* TOPIC_CMD   = TOPIC_FAN_CMD;
 
   // Device state (updated by MQTT, even when inactive)
   uint8_t _speed            = 0;     // 0=off, 1-6
   bool    _directionForward = true;  // true=forward, false=reverse
+
+  // Encoder accumulator — M5Dial encoder produces 4 counts per physical detent.
+  // At high loop rates, readAndReset() returns partial counts (1-3).
+  // Accumulate until a full detent (±4) before changing speed.
+  int16_t _encoderAccum = 0;
 
   // Rendering state
   bool _dirty = true;

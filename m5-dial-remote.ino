@@ -42,10 +42,21 @@ void mqttCallback(char* topic, byte* payload, unsigned int length) {
   }
 }
 
+// --- Touch hold tracking ---
+// M5Unified's hold state machine requires perfectly still contact, which is
+// impractical on the M5Dial's small screen — any slight finger movement
+// pushes the state into flick/drag instead of hold. We use our own
+// time-based detection: isPressed() stays true across touch/flick states,
+// so we just check touch duration against a threshold.
+static bool          touchHoldActive   = false;
+static bool          touchWasPressed   = false;
+static unsigned long touchStartMs      = 0;
+static constexpr unsigned long HOLD_THRESHOLD_MS = 500;
+
 // --- Input polling ---
 // Reads hardware inputs and returns a single InputEvent.
-// Called after Navigator has consumed swipe gestures.
-InputEvent pollInput() {
+// touchDetail is the shared touch state read once per loop (see loop()).
+InputEvent pollInput(const m5::touch_detail_t& touch) {
   InputEvent ev;
 
   if (M5Dial.BtnA.wasPressed())       { ev.type = InputType::ButtonPress;       return ev; }
@@ -60,10 +71,36 @@ InputEvent pollInput() {
     return ev;
   }
 
-  // Touch tap/hold (swipes already consumed by Navigator)
-  auto touch = M5Dial.Touch.getDetail();
-  if (touch.wasClicked()) { ev.type = InputType::TouchTap;       return ev; }
-  if (touch.wasHold())    { ev.type = InputType::TouchHoldStart; return ev; }
+  // Touch hold/release — suppress when BtnA is physically pressed (pressing
+  // the button also contacts the capacitive screen).
+  if (!M5Dial.BtnA.isPressed()) {
+    bool isTouching = touch.isPressed();
+
+    // Track touch start time for duration-based hold detection
+    if (isTouching && !touchWasPressed) {
+      touchStartMs = millis();
+    }
+    touchWasPressed = isTouching;
+
+    // Hold: finger down for > threshold (works even with slight movement)
+    if (!touchHoldActive && isTouching &&
+        (millis() - touchStartMs) > HOLD_THRESHOLD_MS) {
+      touchHoldActive = true;
+      ev.type = InputType::TouchHoldStart;
+      return ev;
+    }
+    // Release after hold
+    if (touchHoldActive && !isTouching) {
+      touchHoldActive = false;
+      ev.type = InputType::TouchHoldEnd;
+      return ev;
+    }
+    // Tap (only if not in a hold)
+    if (!touchHoldActive && touch.wasClicked()) {
+      ev.type = InputType::TouchTap;
+      return ev;
+    }
+  }
 
   return ev;  // InputType::None
 }
@@ -104,11 +141,14 @@ void loop() {
     return;
   }
 
-  // 2. Navigation — consume swipe gestures before passing input to active view
-  navigator.processTouchInput(displayMgr);
+  // 2. Read touch state ONCE — shared by Navigator (swipes) and pollInput (hold)
+  auto touch = M5Dial.Touch.getDetail();
 
-  // 3. Input — button, encoder, touch → active view
-  InputEvent ev = pollInput();
+  // 3. Navigation — consume swipe gestures before passing input to active view
+  navigator.processTouchInput(touch, displayMgr);
+
+  // 4. Input — button, encoder, touch → active view
+  InputEvent ev = pollInput(touch);
   if (ev.type != InputType::None) {
     navigator.activeView()->onInput(ev, connectivity.mqtt());
   }

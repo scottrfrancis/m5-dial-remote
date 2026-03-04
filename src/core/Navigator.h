@@ -1,6 +1,7 @@
 #pragma once
 #include "../DeviceView.h"
 #include "../Config.h"
+#include <M5Dial.h>
 #include <cstdint>
 
 class DisplayManager;
@@ -10,9 +11,8 @@ public:
   void setViews(DeviceView** views, uint8_t count);
 
   // Process touch input for swipe gestures. Call before pollInput() each loop.
-  // Reads M5Dial.Touch.getDetail() directly and consumes flick gestures.
-  // Needs DisplayManager reference to trigger onActivate/onDeactivate on view switch.
-  void processTouchInput(DisplayManager& display);
+  // Touch detail is read once in loop() and passed in to avoid consuming one-shot flags.
+  void processTouchInput(const m5::touch_detail_t& touch, DisplayManager& display);
 
   DeviceView* activeView() const;
   uint8_t     activeIndex() const;

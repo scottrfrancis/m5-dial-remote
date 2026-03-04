@@ -232,19 +232,21 @@ Each view does `strcmp()` on its own topics and returns `true` if handled. Linea
 | ButtonHold | Toggle direction |
 | Display | Speed arc (0–6 mapped to gauge), direction arrow (up/down) |
 
-### LightView — New (Modal Encoder)
+### LightView — Modal Encoder
 
 | Aspect | Detail |
 |---|---|
 | Sub topics | `fan/bedroom/light` |
-| Pub topic | `fan/bedroom/command` |
-| State | `_on`, `_brightness` (0–255), `_colorTemp` (153–500 mireds), `_mode` enum |
+| Pub topic | `light/bedroom/command` |
+| State | `_on`, `_brightness` (0–255), `_colorTemp` (200–370 mireds), `_mode` enum |
 | Button | Toggle on/off |
-| Encoder (Brightness mode) | Adjust brightness |
-| Encoder (ColorTemp mode) | Adjust color temperature |
-| TouchHoldStart | Enter color temp mode |
-| TouchHoldEnd | Exit color temp mode |
-| Display | Brightness arc (normal mode), warm-to-cool gradient arc (color temp mode) |
+| Encoder (Brightness mode) | Adjust brightness (step 16, min 1) |
+| Encoder (ColorTemp mode) | Adjust color temperature (step 10 mireds) |
+| Touch hold (>500ms) | Enter color temp mode (sticky) |
+| Touch tap | Exit color temp mode back to brightness |
+| Display (off) | Grey light bulb icon + "OFF" label |
+| Display (on, brightness) | Yellow light bulb icon + brightness %, brightness arc, "BRIGHTNESS" label |
+| Display (on, color temp) | Yellow light bulb icon + mireds value, color temp arc, "COLOR TEMP" label |
 
 ### SettingsView — Local Device Settings
 

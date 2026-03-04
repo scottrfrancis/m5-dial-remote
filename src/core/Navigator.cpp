@@ -21,10 +21,8 @@ void Navigator::setViews(DeviceView** views, uint8_t count) {
 // directions wrap around.
 // ---------------------------------------------------------------------------
 
-void Navigator::processTouchInput(DisplayManager& display) {
+void Navigator::processTouchInput(const m5::touch_detail_t& t, DisplayManager& display) {
   if (_views == nullptr || _count == 0) return;
-
-  auto t = M5Dial.Touch.getDetail();
 
   if (!t.wasFlicked()) return;
 

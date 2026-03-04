@@ -115,8 +115,8 @@ These automations do not exist yet — they need to be built in HA.
 | `fan/bedroom/light` | HA → Dial | `{"state": "on", "brightness": 200, "color_temp": 350}` | Light state updates |
 | `fan/bedroom/command` | Dial → HA | `{"set_speed": 4}` | Set fan speed (0=off, 1-6) |
 | `fan/bedroom/command` | Dial → HA | `{"set_direction": "reverse"}` | Set fan direction |
-| `fan/bedroom/command` | Dial → HA | `{"set_light": "on", "brightness": 128}` | Light control |
-| `fan/bedroom/command` | Dial → HA | `{"set_color_temp": 400}` | Light color temperature |
+| `light/bedroom/command` | Dial → HA | `{"set_light": "on", "brightness": 128}` | Light control |
+| `light/bedroom/command` | Dial → HA | `{"set_color_temp": 350}` | Light color temperature |
 
 See [Navigation and UX](#navigation-and-ux) below for display and controls spec.
 
@@ -214,11 +214,13 @@ Implementation: detect horizontal flick via `M5Dial.Touch.getDetail()` → `wasF
 ### Light View
 
 - **Button press**: Toggle light on/off
-- **Rotary encoder**: Adjust brightness level
-- **Tap+hold**: Enter color temperature adjustment mode — rotary to adjust, tap to accept/exit
+- **Rotary encoder**: Adjust brightness (default) or color temperature (when in color temp mode)
+- **Touch hold** (>500ms): Enter color temperature adjustment mode (sticky — stays until tapped)
+- **Touch tap**: Exit color temperature mode, return to brightness mode
 - **Display**:
-  - Brightness level arc or fill indicator
-  - Color temperature indicator (warm/cool) when in adjustment mode
+  - Off: grey light bulb icon with "OFF" label
+  - On (brightness mode): yellow light bulb icon, brightness percentage, brightness arc
+  - On (color temp mode): yellow light bulb icon, mireds value, color temp arc (blue=cool, orange=warm)
 
 ### Settings View
 

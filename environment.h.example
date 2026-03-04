@@ -10,5 +10,17 @@
 const char *ssid     = "YourSSID";
 const char *password = "YourPassword";
 
-// MQTT broker hostname or IP
-const char *mqtt_server = "mqtt.local";
+// MQTT broker IP address (do not use mDNS hostnames — unreliable on ESP32-S3)
+const char *mqtt_server = "192.168.1.100";
+
+// MQTT topic overrides (optional).
+// Uncomment and change any topic to match your Home Assistant automation config.
+// Defaults are defined in src/MqttTopics.h.
+//
+// #define TOPIC_WATER_TEMP    "water/temp"
+// #define TOPIC_WATER_RECIRC  "water/recirc"
+// #define TOPIC_WATER_CMD     "water/recirc/cmd"
+// #define TOPIC_FAN_STATE     "fan/bedroom/state"
+// #define TOPIC_FAN_CMD       "fan/bedroom/command"
+// #define TOPIC_LIGHT_STATE   "fan/bedroom/light"
+// #define TOPIC_LIGHT_CMD     "light/bedroom/command"
