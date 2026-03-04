@@ -94,8 +94,8 @@ void drawPageDots(M5GFX&  gfx,
 
 // Draw a simple directional arrow centered at (cx, cy).
 //
-//   up     true  → upward-pointing arrow (forward airflow)
-//          false → downward-pointing arrow (reverse airflow)
+//   up     true  → upward-pointing arrow (updraft / Hubspace "reverse")
+//          false → downward-pointing arrow (downdraft / Hubspace "forward")
 //   color  RGB565 fill color
 void drawArrow(M5GFX& gfx, int cx, int cy, bool up, uint16_t color);
 

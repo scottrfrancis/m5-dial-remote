@@ -69,30 +69,54 @@ void LightView::onInput(const InputEvent& event, PubSubClient& mqtt) {
   switch (event.type) {
 
     case InputType::ButtonPress:
+      _on = !_on;  // optimistic local update
       publishToggle(mqtt);
-      break;
-
-    case InputType::EncoderDelta:
-      if (_mode == Mode::Brightness) {
-        int adjusted = static_cast<int>(_brightness) + event.delta * 4;
-        _brightness  = static_cast<uint8_t>(constrain(adjusted, 0, 255));
-        publishBrightness(mqtt);
-      } else {
-        int adjusted = static_cast<int>(_colorTemp) + event.delta * 8;
-        _colorTemp   = static_cast<int16_t>(constrain(adjusted, 153, 500));
-        publishColorTemp(mqtt);
-      }
       _dirty = true;
       break;
 
+    case InputType::EncoderDelta:
+      if (!_on) break;  // ignore encoder when light is off
+      _encoderAccum += event.delta;
+      {
+        int step = _encoderAccum / 4;  // one physical detent = 4 counts
+        if (step != 0) {
+          _encoderAccum -= step * 4;
+          if (_mode == Mode::Brightness) {
+            int adjusted = static_cast<int>(_brightness) + step * 16;
+            _brightness  = static_cast<uint8_t>(constrain(adjusted, 1, 255));
+            if (millis() - _lastPublishMs > PUBLISH_INTERVAL_MS) {
+              publishBrightness(mqtt);
+              _lastPublishMs = millis();
+            }
+          } else {
+            int adjusted = static_cast<int>(_colorTemp) + step * 10;
+            _colorTemp   = static_cast<int16_t>(constrain(adjusted, 200, 370));
+            if (millis() - _lastPublishMs > PUBLISH_INTERVAL_MS) {
+              publishColorTemp(mqtt);
+              _lastPublishMs = millis();
+            }
+          }
+          _dirty = true;
+        }
+      }
+      break;
+
     case InputType::TouchHoldStart:
+      // Hold enters color temp mode (sticky — stays until tapped)
       _mode  = Mode::ColorTemp;
       _dirty = true;
       break;
 
     case InputType::TouchHoldEnd:
-      _mode  = Mode::Brightness;
-      _dirty = true;
+      // Ignored — mode is sticky, exits via tap
+      break;
+
+    case InputType::TouchTap:
+      // Tap exits color temp mode back to brightness
+      if (_mode == Mode::ColorTemp) {
+        _mode  = Mode::Brightness;
+        _dirty = true;
+      }
       break;
 
     default:
@@ -164,61 +188,75 @@ void LightView::publishColorTemp(PubSubClient& mqtt) {
 
 void LightView::drawFull(DisplayManager& display) {
   display.clear();
+  auto& gfx = display.gfx();
 
-  // Light is off — show a single dim label and nothing else
+  // --- Light bulb icon (centered, slightly above midpoint) ---
+  const int bx = Cfg::DISPLAY_CX;
+  const int by = Cfg::DISPLAY_CY - 15;
+  const int bulbR = 24;
+  const uint16_t baseColor = 0x6B4D;  // dark silver screw cap
+
   if (!_on) {
-    display.drawCenteredText("OFF", 0x7BEF, 2.0f);
+    // Grey bulb + "OFF" label
+    const uint16_t grey = 0x7BEF;
+    gfx.fillCircle(bx, by, bulbR, grey);
+    gfx.fillRoundRect(bx - 8, by + bulbR, 16, 12, 2, baseColor);
+
+    gfx.setTextDatum(middle_center);
+    gfx.setTextSize(1.0f);
+    gfx.setTextColor(grey);
+    gfx.drawString("OFF", bx, by + bulbR + 28);
     return;
   }
 
-  // Color for the arc and value label.
-  // Below the midpoint (326 mireds) = cool blue; at or above = warm orange.
+  // --- ON state ---
+  // Color for arc and value label based on color temperature
   uint16_t tempColor = (_colorTemp < 326) ? static_cast<uint16_t>(0x5DDF)
                                           : static_cast<uint16_t>(0xFD20);
 
+  // Yellow bulb + screw base
+  gfx.fillCircle(bx, by, bulbR, YELLOW);
+  gfx.fillRoundRect(bx - 8, by + bulbR, 16, 12, 2, baseColor);
+
+  gfx.setTextDatum(middle_center);
+
   if (_mode == Mode::Brightness) {
-    // Main label — brightness as a percentage
+    // Brightness percentage below bulb
     char buf[8];
     int pct = static_cast<int>(round(_brightness / 255.0f * 100.0f));
     snprintf(buf, sizeof(buf), "%d%%", pct);
-    display.drawCenteredText(buf, WHITE, 2.0f);
+    gfx.setTextSize(1.0f);
+    gfx.setTextColor(WHITE);
+    gfx.drawString(buf, bx, by + bulbR + 28);
 
     // Brightness arc
     float normalized = _brightness / 255.0f;
-    Gfx::drawValueArc(display.gfx(),
-                      normalized,
-                      YELLOW,
-                      Cfg::DISPLAY_CX,
-                      Cfg::DISPLAY_CY,
-                      Cfg::ARC_RADIUS,
-                      Cfg::ARC_THICKNESS);
+    Gfx::drawValueArc(gfx, normalized, YELLOW,
+                      Cfg::DISPLAY_CX, Cfg::DISPLAY_CY,
+                      Cfg::ARC_RADIUS, Cfg::ARC_THICKNESS);
 
     // Mode label
-    display.gfx().setTextDatum(middle_center);
-    display.gfx().setTextSize(0.6f);
-    display.gfx().setTextColor(0x7BEF);
-    display.gfx().drawString("BRIGHTNESS", Cfg::DISPLAY_CX, Cfg::DISPLAY_CY + 40);
+    gfx.setTextSize(0.6f);
+    gfx.setTextColor(0x7BEF);
+    gfx.drawString("BRIGHTNESS", Cfg::DISPLAY_CX, Cfg::DISPLAY_CY + 45);
 
   } else {
-    // Main label — color temperature in mireds
+    // Color temp in mireds below bulb
     char buf[8];
     snprintf(buf, sizeof(buf), "%dm", static_cast<int>(_colorTemp));
-    display.drawCenteredText(buf, tempColor, 2.0f);
+    gfx.setTextSize(1.0f);
+    gfx.setTextColor(tempColor);
+    gfx.drawString(buf, bx, by + bulbR + 28);
 
-    // Color temperature arc — normalized over the 153–500 mired range
-    float normalized = (_colorTemp - 153.0f) / (500.0f - 153.0f);
-    Gfx::drawValueArc(display.gfx(),
-                      normalized,
-                      tempColor,
-                      Cfg::DISPLAY_CX,
-                      Cfg::DISPLAY_CY,
-                      Cfg::ARC_RADIUS,
-                      Cfg::ARC_THICKNESS);
+    // Color temperature arc
+    float normalized = (_colorTemp - 200.0f) / (370.0f - 200.0f);
+    Gfx::drawValueArc(gfx, normalized, tempColor,
+                      Cfg::DISPLAY_CX, Cfg::DISPLAY_CY,
+                      Cfg::ARC_RADIUS, Cfg::ARC_THICKNESS);
 
     // Mode label
-    display.gfx().setTextDatum(middle_center);
-    display.gfx().setTextSize(0.6f);
-    display.gfx().setTextColor(0x7BEF);
-    display.gfx().drawString("COLOR TEMP", Cfg::DISPLAY_CX, Cfg::DISPLAY_CY + 40);
+    gfx.setTextSize(0.6f);
+    gfx.setTextColor(0x7BEF);
+    gfx.drawString("COLOR TEMP", Cfg::DISPLAY_CX, Cfg::DISPLAY_CY + 45);
   }
 }

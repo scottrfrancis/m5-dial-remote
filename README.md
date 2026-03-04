@@ -4,7 +4,7 @@ A multi-device IoT remote control built on the M5Stack Dial. Swipe between devic
 
 ## Hardware
 
-- **M5Stack Dial** — ESP32-S3, 240x240 round LCD (GC9A01), capacitive touch, rotary encoder, button
+- **[M5Stack Dial](https://shop.m5stack.com/products/m5stack-dial-esp32-s3-smart-rotary-knob-w-1-28-round-touch-screen)** — ESP32-S3, 240x240 round LCD (GC9A01), capacitive touch, rotary encoder, button ([documentation](https://docs.m5stack.com/en/core/M5Dial))
 
 ## Device Views
 
@@ -12,7 +12,7 @@ A multi-device IoT remote control built on the M5Stack Dial. Swipe between devic
 |------|-----------------|---------|--------|
 | **Water Heater** | Temperature display + recirculation pump | — | Start pump |
 | **Fan** | Ceiling fan speed and direction | Speed 0-6 | Toggle on/off |
-| **Light** | Brightness and color temperature | Adjust value | Toggle on/off |
+| **Light** | Brightness and color temperature | Adjust brightness (hold screen for color temp) | Toggle on/off |
 | **Settings** | Display brightness | Adjust brightness | — |
 
 Swipe left/right to navigate between views. Page dots at the bottom show your position.
@@ -24,7 +24,7 @@ Swipe left/right to navigate between views. Page dots at the bottom show your po
 | Water Heater | `water/temp` | — | `{"temp_degF": 120.5}` |
 | Water Heater | `water/recirc` | `water/recirc/cmd` | `{"pump": "on"}` / `{"start": 5}` |
 | Fan | `fan/bedroom/state` | `fan/bedroom/command` | `{"speed": 3, "direction": "forward"}` |
-| Light | `fan/bedroom/light` | `fan/bedroom/command` | `{"brightness": 200, "color_temp": 300}` |
+| Light | `fan/bedroom/light` | `light/bedroom/command` | `{"brightness": 200, "color_temp": 300}` |
 
 The Dial talks directly to an MQTT broker (EMQX). Home Assistant bridges entity state to MQTT via automations.
 

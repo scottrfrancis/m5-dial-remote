@@ -6,6 +6,7 @@
 #include "../DeviceView.h"
 #include "../core/DisplayManager.h"
 #include "../InputEvent.h"
+#include "../MqttTopics.h"
 
 // ---------------------------------------------------------------------------
 // WaterHeaterView — displays water heater temperature and recirculation pump
@@ -33,10 +34,10 @@ public:
   void update(unsigned long now, DisplayManager& display) override;
 
 private:
-  // MQTT topics
-  static constexpr const char* TOPIC_TEMP   = "water/temp";
-  static constexpr const char* TOPIC_RECIRC = "water/recirc";
-  static constexpr const char* TOPIC_CMD    = "water/recirc/cmd";  // separate pub topic (bug fix)
+  // MQTT topics (defaults in MqttTopics.h, overridable in environment.h)
+  static constexpr const char* TOPIC_TEMP   = TOPIC_WATER_TEMP;
+  static constexpr const char* TOPIC_RECIRC = TOPIC_WATER_RECIRC;
+  static constexpr const char* TOPIC_CMD    = TOPIC_WATER_CMD;
 
   // Device state (updated by MQTT, even when inactive)
   float _tempF       = 50.0f;

@@ -35,7 +35,8 @@ bool FanView::onMqttMessage(const char* topic,
 
   const char* dir = doc["direction"];
   if (dir) {
-    _directionForward = (strcmp(dir, "forward") == 0);
+    // Hubspace "forward" = downdraft; map to _directionForward = false (down arrow)
+    _directionForward = (strcmp(dir, "reverse") == 0);
   }
 
   _dirty = true;
@@ -71,11 +72,15 @@ void FanView::onInput(const InputEvent& event, PubSubClient& mqtt) {
       break;
 
     case InputType::EncoderDelta: {
-      // Encoder produces 4 counts per physical detent; divide to get steps.
-      int step     = event.delta / 4;
-      int newSpeed = static_cast<int>(_speed) + step;
-      _speed       = static_cast<uint8_t>(constrain(newSpeed, 0, 6));
-      publishSpeed(mqtt);
+      // Accumulate partial encoder counts until a full detent (4 counts).
+      _encoderAccum += event.delta;
+      int step = _encoderAccum / 4;
+      if (step != 0) {
+        _encoderAccum -= step * 4;  // keep remainder for next event
+        int newSpeed = static_cast<int>(_speed) + step;
+        _speed       = static_cast<uint8_t>(constrain(newSpeed, 0, 6));
+        publishSpeed(mqtt);
+      }
       break;
     }
 
@@ -126,13 +131,14 @@ void FanView::publishSpeed(PubSubClient& mqtt) {
 
 void FanView::publishDirection(PubSubClient& mqtt) {
   StaticJsonDocument<64> doc;
-  doc["set_direction"] = _directionForward ? "forward" : "reverse";
+  // Invert back: _directionForward (up arrow) = Hubspace "reverse"
+  doc["set_direction"] = _directionForward ? "reverse" : "forward";
 
   char payload[64];
   serializeJson(doc, payload);
 
   Serial.print("FanView: publishing direction ");
-  Serial.println(_directionForward ? "forward" : "reverse");
+  Serial.println(_directionForward ? "reverse" : "forward");
 
   if (mqtt.publish(TOPIC_CMD, payload)) {
     Serial.println("FanView: MQTT publish successful");
@@ -155,8 +161,8 @@ void FanView::drawFull(DisplayManager& display) {
     display.drawCenteredText("OFF", 0x7BEF, 2.0f);
   } else {
     // Show speed label in cyan
-    char buf[16];
-    snprintf(buf, sizeof(buf), "Speed %d", _speed);
+    char buf[4];
+    snprintf(buf, sizeof(buf), "%d", _speed);
     display.drawCenteredText(buf, CYAN, 2.0f);
 
     // Speed arc — color indicates speed zone
