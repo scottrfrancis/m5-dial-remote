@@ -1,28 +1,16 @@
-# Refactor: Multi-Device Architecture for M5Stack Dial Remote
+# Multi-Device Architecture for M5Stack Dial Remote
 
 ## Context
 
-The current firmware is a single 300-line `.ino` file that was a quick-and-dirty implementation for one device (water heater). It works and is deployed. Now we're expanding to support N devices (fan, light, future devices) with swipe navigation, per-view input handling, and per-view MQTT routing. The monolith can't scale — display logic, network logic, input handling, and application state are all interleaved in `loop()` with 15+ globals.
+M5Stack Dial (ESP32-S3) IoT remote with a **coordinator + views** architecture. The main `.ino` runs a 5-step loop pipeline; each device screen is a `DeviceView` subclass that handles its own MQTT topics, input, and rendering. Adding a new device means implementing one subclass and registering it — zero framework changes.
 
-This refactor decomposes the monolith into focused modules using a **coordinator + views** pattern, applying SOLID principles pragmatically for embedded.
-
----
-
-## SOLID Principles Applied
-
-| Principle | Application |
-|---|---|
-| **Single Responsibility** | Each class owns one concern: `ConnectivityManager` owns WiFi/MQTT, `Navigator` owns swipe/view switching, each `DeviceView` owns its device logic |
-| **Open/Closed** | Adding a new device = implement `DeviceView` subclass + register it in the view array. Zero changes to framework code |
-| **Liskov Substitution** | All views are interchangeable through the `DeviceView` interface — Navigator, MQTT router, and input dispatcher treat them identically |
-| **Interface Segregation** | Views only see what they need: `PubSubClient&` for publishing, `DisplayManager&` for drawing. No god-object passed around |
-| **Dependency Inversion** | The main loop depends on the `DeviceView` abstraction, not concrete views. Views depend on `DisplayManager` (abstraction over raw GFX) |
+SOLID principles applied pragmatically for embedded: single responsibility per class, views interchangeable through the `DeviceView` interface, views only see `PubSubClient&` and `DisplayManager&` (no god-object), and the main loop depends on the abstraction, not concrete views.
 
 ---
 
 ## File Layout
 
-```
+```text
 m5-dial-remote/
   m5-dial-remote.ino             # Coordinator — setup() + loop()
   environment.h                  # WiFi/MQTT credentials (gitignored)
@@ -31,13 +19,15 @@ m5-dial-remote/
     Config.h                     # Compile-time constants
     InputEvent.h                 # Input event enum + struct
     DeviceView.h                 # Abstract base class
+    MqttTopics.h                 # Default MQTT topics (overridable via environment.h)
     core/
-      ConnectivityManager.h/.cpp # WiFi + MQTT lifecycle, exponential backoff
+      ConnectivityManager.h/.cpp # WiFi + MQTT lifecycle, exponential backoff, NTP
       DisplayManager.h/.cpp      # Display wrapper, overlays, page dots
       Navigator.h/.cpp           # Swipe detection, view switching
     gfx/
-      Graphics.h/.cpp            # Drawing primitives (arcs, color wheel, arrows)
+      Graphics.h/.cpp            # Drawing primitives (arcs, color wheel, arrows, speed bars)
     views/
+      DashboardView.h            # Multi-device summary (stub)
       WaterHeaterView.h/.cpp     # Water heater temp + pump control
       FanView.h/.cpp             # Ceiling fan speed + direction
       LightView.h/.cpp           # Light brightness + color temp (modal encoder)
@@ -53,21 +43,22 @@ The `.ino` must remain in the project root (Arduino requirement). Source files i
 
 ## Architecture Overview
 
-```
+```text
 ┌─────────────────────────────────────────────────┐
 │  loop()  — 5-step pipeline                       │
 │                                                   │
-│  1. connectivity.tick()     → WiFi/MQTT health   │
-│  2. navigator.processTouch() → consume swipes    │
-│  3. pollInput()             → produce InputEvent │
-│  4. activeView->onInput()   → view handles input │
-│     activeView->update()    → view renders       │
-│  5. displayMgr.drawPageDots() → navigation dots  │
+│  1. connectivity.tick()        → WiFi/MQTT health │
+│  2. touch = getDetail()        → read once        │
+│  3. navigator.processTouchInput() → consume swipes│
+│  4. pollInput()                → produce InputEvent│
+│     activeView->onInput()      → view handles it  │
+│     activeView->update()       → view renders     │
+│  5. displayMgr.drawPageDots()  → navigation dots  │
 └─────────────────────────────────────────────────┘
          │                    │
          ▼                    ▼
   ConnectivityManager    Navigator
-  (WiFi + MQTT)         (swipe + view index)
+  (WiFi + MQTT + NTP)   (swipe + view index)
          │
          ▼
   mqttCallback() ──► iterates ALL views ──► view.onMqttMessage()
@@ -103,7 +94,7 @@ public:
 };
 ```
 
-**Critical design decisions:**
+**Design decisions:**
 - `onMqttMessage` called on ALL views so background views track state. When you swipe to a view, it already has current data.
 - `onInput` and `update` only called on active view — inactive views consume zero CPU.
 - Views receive `PubSubClient&` directly to publish. No intermediary — pragmatic, not over-abstracted.
@@ -124,39 +115,57 @@ struct InputEvent {
 
 Swipe events are **not** in this enum — Navigator consumes them before input dispatch.
 
+### MqttTopics (`MqttTopics.h`)
+
+Default topic strings defined as `#define` macros with `#ifndef` guards. Override any topic in `environment.h` before including this header.
+
 ---
 
 ## Subsystem Details
 
 ### Config.h — Centralized Constants
 
-Eliminates all magic numbers (120/120 center, radii, timing intervals, topic strings).
+All magic numbers live here: display geometry, arc parameters, timing intervals, dot layout.
 
 ```cpp
 namespace Cfg {
-  constexpr int SCREEN_CX = 120, SCREEN_CY = 120;
-  constexpr int ARC_RADIUS = 100, ARC_THICKNESS = 10;
-  constexpr int WHEEL_R_INNER = 83, WHEEL_R_OUTER = 87;
-  constexpr unsigned long ANIM_FRAME_MS = 50;     // 20 fps
-  constexpr unsigned long WIFI_CHECK_MS = 5000;
-  constexpr unsigned long MQTT_RETRY_MIN = 2000;
-  constexpr unsigned long MQTT_RETRY_MAX = 30000;
+  constexpr int DISPLAY_CX = 120, DISPLAY_CY = 120;
+
+  constexpr int   ARC_RADIUS    = 100;
+  constexpr int   ARC_THICKNESS = 10;
+  constexpr int   ARC_START_DEG = 135;     // 7 o'clock
+  constexpr int   ARC_SPAN_DEG  = 270;
+  constexpr float TEMP_MIN_F    = 90.0f;
+  constexpr float TEMP_MAX_F    = 140.0f;
+
+  constexpr int CW_INNER_RADIUS  = 83;
+  constexpr int CW_OUTER_RADIUS  = 87;
+  constexpr int CW_STEP_DEG      = 10;
+  constexpr int CW_ADVANCE_DEG   = 8;
+
+  constexpr unsigned long FRAME_INTERVAL_MS      = 50;     // ~20 fps
+  constexpr unsigned long WIFI_CHECK_INTERVAL_MS = 5000;
+  constexpr unsigned long MQTT_RETRY_MIN_MS      = 2000;
+  constexpr unsigned long MQTT_RETRY_MAX_MS      = 30000;
+
   constexpr int SWIPE_THRESHOLD_PX = 40;
-  constexpr int MAX_VIEWS = 8;
+  constexpr int MAX_VIEWS          = 8;
+
+  constexpr int DOT_RADIUS_PX  = 4;
+  constexpr int DOT_Y_OFFSET   = 220;
+  constexpr int DOT_SPACING_PX = 14;
 }
 ```
 
-### ConnectivityManager — WiFi + MQTT Resilience
+### ConnectivityManager — WiFi + MQTT + NTP
 
-Extracts all connection logic from `loop()`. Owns `WiFiClient` + `PubSubClient`.
+Owns `WiFiClient` + `PubSubClient`. Manages WiFi reconnect, MQTT exponential backoff (2s → 30s cap), and NTP time sync.
 
-- `beginBlocking(ssid, pass, broker, port)` — called once in `setup()`, blocks until WiFi connects
-- `tick(now)` — non-blocking; returns `true` if MQTT is connected and views should proceed
+- `beginBlocking(ssid, pass, broker, port, gmtOffset, dstOffset)` — called once in `setup()`, blocks until WiFi connects, configures NTP
+- `tick(now)` — non-blocking; returns `true` if MQTT is connected. Calls `mqtt.loop()` internally.
 - `status()` / `statusMessage()` — for overlay display when disconnected
 - `mqtt()` — returns `PubSubClient&` for views to publish through
-- On MQTT reconnect: iterates all views calling `onMqttConnected()` so each re-subscribes
-
-Preserves the existing exponential backoff (2s → 30s cap) and non-blocking WiFi check (every 5s).
+- `setViews(views, count)` — on MQTT reconnect, iterates all views calling `onMqttConnected()` so each re-subscribes
 
 ### DisplayManager — Shared Display Resource
 
@@ -171,29 +180,28 @@ Thin wrapper. Views get direct `M5GFX&` access for custom rendering.
 
 ### Graphics — Reusable Drawing Primitives (`Graphics.h/.cpp`)
 
-Parameterized versions of `drawColorWheelFrame()` and `drawTempArc()`:
-
-- `Gfx::drawValueArc(gfx, value, color, cx, cy, r, thickness)` — gauge arc, 0.0–1.0
+- `Gfx::drawValueArc(gfx, value, color, cx, cy, r, thickness, startDeg=135, spanDeg=270)` — gauge arc, 0.0–1.0
 - `Gfx::drawColorWheel(gfx, angleOffset, cx, cy, rInner, rOuter)` — spinning rainbow ring
 - `Gfx::hsvToRgb565(hue, sat, val)` — color conversion
 - `Gfx::drawArrow(gfx, cx, cy, up, color)` — directional arrow (fan view)
-- `Gfx::drawPageDots(gfx, current, total, cy, spacing, radius)` — dot indicators
+- `Gfx::drawSpeedBars(gfx, speed, dirForward, cx, cy, barW, barH, gap)` — 6-bar speed indicator
+- `Gfx::drawPageDots(gfx, current, total, cy, dotRadius, spacing)` — dot indicators
 
 ### Navigator — Swipe Detection + View Switching
 
-- Reads `M5Dial.Touch.getDetail()` directly — swipes never reach views
-- `processTouchInput(now)` — detects flick gestures, calls `switchTo()` on swipe
-- `switchTo(index)` — calls `onDeactivate()` on old view, `onActivate()` on new view
+- `processTouchInput(touch, display)` — takes pre-read `m5::touch_detail_t` and `DisplayManager&`; detects flick gestures, calls `switchTo()` on swipe
+- `switchTo(index, display)` — calls `onDeactivate()` on old view, `onActivate()` on new view
+- `goTo(index, display)` — programmatic navigation (same as `switchTo`)
 - `activeView()` / `activeIndex()` / `viewCount()` — accessors
 
 ### MQTT Routing
 
-PubSubClient requires a C-style callback. The routing is a free function:
+PubSubClient requires a C-style callback. The routing is a free function in the `.ino`:
 
 ```cpp
 void mqttCallback(char* topic, byte* payload, unsigned int length) {
   payload[length] = '\0';
-  for (uint8_t i = 0; i < viewCount; i++) {
+  for (uint8_t i = 0; i < VIEW_COUNT; i++) {
     if (views[i]->onMqttMessage(topic, payload, length)) break;
   }
 }
@@ -205,12 +213,21 @@ Each view does `strcmp()` on its own topics and returns `true` if handled. Linea
 
 ## Concrete Views
 
-### WaterHeaterView — Port of Existing Code
+### DashboardView
 
 | Aspect | Detail |
-|---|---|
+| --- | --- |
+| Sub topics | `water/temp`, `water/recirc`, `fan/bedroom/state` |
+| Pub topic | `fan/bedroom/command`, `water/recirc/cmd` |
+| State | Aggregated from other views |
+| Display | Multi-device summary (stub — header only, no `.cpp`) |
+
+### WaterHeaterView
+
+| Aspect | Detail |
+| --- | --- |
 | Sub topics | `water/temp`, `water/recirc` |
-| Pub topic | `water/recirc/cmd` (**changed** — separate from sub to avoid echo) |
+| Pub topic | `water/recirc/cmd` |
 | State | `_tempF`, `_pumpRunning`, `_wheelAngle`, `_lastFrameTime` |
 | Button | Publish `{"start": 5}` to `water/recirc/cmd` |
 | Encoder | Unused |
@@ -218,12 +235,10 @@ Each view does `strcmp()` on its own topics and returns `true` if handled. Linea
 | Animation | Color wheel at 20fps, draws over itself without clearing |
 | Dirty flag | `_dirty` set by `onMqttMessage` and `onActivate`, cleared after `drawFull()` |
 
-**Bug fix included:** Separate pub/sub topics. Currently `pump_topic` is used for both, causing the device to receive its own publishes and potentially flipping `pumpRunning` to false. Requires a corresponding HA automation change (`water/recirc/cmd` trigger).
-
-### FanView — New
+### FanView
 
 | Aspect | Detail |
-|---|---|
+| --- | --- |
 | Sub topics | `fan/bedroom/state` |
 | Pub topic | `fan/bedroom/command` |
 | State | `_speed` (0–6), `_direction` ("forward"/"reverse") |
@@ -232,10 +247,12 @@ Each view does `strcmp()` on its own topics and returns `true` if handled. Linea
 | ButtonHold | Toggle direction |
 | Display | Speed arc (0–6 mapped to gauge), direction arrow (up/down) |
 
+Note: Hubspace "forward" = downdraft. The UI inverts this — up arrow = "reverse" (updraft).
+
 ### LightView — Modal Encoder
 
 | Aspect | Detail |
-|---|---|
+| --- | --- |
 | Sub topics | `fan/bedroom/light` |
 | Pub topic | `light/bedroom/command` |
 | State | `_on`, `_brightness` (0–255), `_colorTemp` (200–370 mireds), `_mode` enum |
@@ -251,7 +268,7 @@ Each view does `strcmp()` on its own topics and returns `true` if handled. Linea
 ### SettingsView — Local Device Settings
 
 | Aspect | Detail |
-|---|---|
+| --- | --- |
 | Sub topics | None |
 | Pub topic | None |
 | State | `_brightness` (0–255) |
@@ -262,83 +279,11 @@ Each view does `strcmp()` on its own topics and returns `true` if handled. Linea
 
 ---
 
-## Main .ino After Refactor (~70 lines)
+## Main .ino Coordinator
 
-```cpp
-#include <M5Dial.h>
-#include "environment.h"
-#include "src/Config.h"
-#include "src/InputEvent.h"
-#include "src/core/ConnectivityManager.h"
-#include "src/core/DisplayManager.h"
-#include "src/core/Navigator.h"
-#include "src/views/WaterHeaterView.h"
-#include "src/views/FanView.h"
-#include "src/views/LightView.h"
-#include "src/views/SettingsView.h"
+The `.ino` is the coordinator — it owns static view instances, wires subsystems in `setup()`, and runs the 5-step pipeline in `loop()`. Touch state is read once per loop and shared between Navigator (swipes) and `pollInput()` (hold/tap). Touch hold uses custom duration-based detection (500ms threshold) because M5Unified's built-in hold state machine requires perfectly still contact.
 
-static WaterHeaterView waterHeaterView;
-static FanView         fanView;
-static LightView       lightView;
-static SettingsView    settingsView;
-
-static DeviceView* views[] = { &waterHeaterView, &fanView, &lightView, &settingsView };  // 4 views
-static constexpr uint8_t VIEW_COUNT = sizeof(views) / sizeof(views[0]);
-
-static ConnectivityManager connectivity;
-static DisplayManager      displayMgr;
-static Navigator           navigator;
-
-void mqttCallback(char* topic, byte* payload, unsigned int length) {
-  payload[length] = '\0';
-  for (uint8_t i = 0; i < VIEW_COUNT; i++) {
-    if (views[i]->onMqttMessage(topic, payload, length)) break;
-  }
-}
-
-InputEvent pollInput() { /* read BtnA, Encoder, Touch → return InputEvent */ }
-
-void setup() {
-  auto cfg = M5.config();
-  M5Dial.begin(cfg, true /* enableEncoder */);
-  Serial.begin(115200);
-  displayMgr.begin();
-
-  IPAddress ip = connectivity.beginBlocking(ssid, password, mqtt_server, 1883);
-  // show IP briefly...
-
-  connectivity.mqtt().setCallback(mqttCallback);
-  connectivity.setViews(views, VIEW_COUNT);
-  navigator.setViews(views, VIEW_COUNT);
-  navigator.activeView()->onActivate(displayMgr);
-}
-
-void loop() {
-  unsigned long now = millis();
-  M5Dial.update();
-
-  // 1. Connectivity
-  if (!connectivity.tick(now)) {
-    displayMgr.drawStatusOverlay(connectivity.statusMessage());
-    return;
-  }
-  connectivity.mqtt().loop();
-
-  // 2. Navigation (consumes swipes)
-  navigator.processTouchInput(now);
-
-  // 3. Input → active view
-  InputEvent ev = pollInput();
-  if (ev.type != InputType::None)
-    navigator.activeView()->onInput(ev, connectivity.mqtt());
-
-  // 4. Active view render
-  navigator.activeView()->update(now, displayMgr);
-
-  // 5. Page dots overlay
-  displayMgr.drawPageDots(navigator.activeIndex(), navigator.viewCount());
-}
-```
+View order: Dashboard → Water Heater → Fan → Light → Settings
 
 ---
 
@@ -347,83 +292,196 @@ void loop() {
 - **No heap allocation in hot path** — all views statically allocated, `StaticJsonDocument` on stack
 - **No STL containers** — fixed C arrays for view list
 - **One vtable lookup per loop** — negligible at 240 MHz
-- **Arduino IDE compatible** — all files in project root, `.ino` is the entry point
+- **Arduino IDE compatible** — `.ino` in project root, `src/` compiled recursively
 - **C++17** — `constexpr`, `enum class`, `auto`, but no exceptions or RTTI
 
 ---
 
-## Bug Fixes and Gotchas
+## Design Patterns
 
-### M5Dial.begin() — Encoder Must Be Explicitly Enabled
+### Observer — MQTT Fan-Out
 
-`M5Dial.begin(cfg)` defaults `enableEncoder` to `false`. The encoder GPIO pin register pointers are left null, and any call to `Encoder.readAndReset()` dereferences `pin1_register` at `0x00000000`, causing a `LoadProhibited` crash.
+The MQTT broker acts as an external event source. `mqttCallback()` broadcasts each message to all views in registration order; the first view that recognizes the topic returns `true` and stops the scan. Background views update their internal state even when not displayed, so swiping to a view shows current data immediately.
 
-**Fix:** Always pass `true` for the encoder parameter:
+```mermaid
+sequenceDiagram
+    participant Broker as MQTT Broker
+    participant PSC as PubSubClient
+    participant CB as mqttCallback()
+    participant V1 as DashboardView
+    participant V2 as WaterHeaterView
+    participant V3 as FanView
 
-```cpp
-M5Dial.begin(cfg, true /* enableEncoder */);
+    Broker->>PSC: publish fan/bedroom/state
+    PSC->>CB: mqttCallback(topic, payload, len)
+    CB->>V1: onMqttMessage("fan/bedroom/state", ...)
+    V1-->>CB: false (not my topic)
+    CB->>V2: onMqttMessage("fan/bedroom/state", ...)
+    V2-->>CB: false (not my topic)
+    CB->>V3: onMqttMessage("fan/bedroom/state", ...)
+    Note right of V3: parse JSON, update _speed/_direction, _dirty = true
+    V3-->>CB: true (handled)
 ```
 
-The crash manifests as `Guru Meditation Error: Core 1 panic'ed (LoadProhibited)` with `EXCVADDR: 0x00000000`. The backtrace points to `ENCODER::update()` in `Encoder.h:255` where `DIRECT_PIN_READ(arg->pin1_register, arg->pin1_bitmask)` reads through a null pointer.
+On MQTT reconnect, `ConnectivityManager` calls `onMqttConnected()` on every view so each re-subscribes to its topics. Subscriptions are always active for all views, not just the active one.
 
-This was not caught in the original monolith because the old code may not have used the encoder, or used a different `begin()` overload.
+### Dirty Flag — Lazy Rendering
 
-### Shared Pub/Sub Topic — MQTT Echo
+Views track a `bool _dirty` flag. `update()` is called every `loop()` iteration on the active view but only repaints when `_dirty` is true. This avoids redundant full-screen redraws at 240 MHz loop speed.
 
-The original code published `{"start": 5}` to `water/recirc` **and** subscribed to `water/recirc` for `{"pump": "on/off"}`. The device receives its own publish, `callback()` tries to read `doc["pump"]` from `{"start": 5}`, finds it absent, and sets `pumpRunning = false`.
+```mermaid
+stateDiagram-v2
+    [*] --> Clean
 
-**Fix:** Publish to `water/recirc/cmd` (new topic). Requires updating the HA automation to trigger on `water/recirc/cmd` instead of `water/recirc`.
+    Clean --> Dirty : onMqttMessage() — state changed
+    Clean --> Dirty : onActivate() — swiped to
+    Clean --> Dirty : onInput() — user interaction
 
-### ESP32-S3 mDNS Unreliability
+    Dirty --> Clean : update() calls drawFull()
 
-mDNS hostname resolution (e.g. `vault.local`) is unreliable on ESP32-S3. The MQTT broker address should be a raw IP in `environment.h`. If the broker IP changes, update `environment.h` and reflash.
+    note right of Clean : update() is a no-op
+    note right of Dirty : next update() triggers full repaint
+```
 
-### M5GFX API — No getTextSize()
+`_dirty` is set by three sources: incoming MQTT state, view activation (swipe-to), and local input. Background (inactive) views accumulate dirty state from MQTT messages but never draw — `update()` is only called on the active view. On activation, `onActivate()` sets `_dirty = true` unconditionally, guaranteeing a clean repaint.
 
-`M5GFX` does not expose `getTextSize()`. Don't try to save/restore text size around draw calls — just set the size you need directly.
+**WaterHeaterView exception:** Has a second rendering track — the color wheel animation runs at ~20 fps independent of the dirty flag, drawing over itself without clearing.
+
+### Optimistic Update
+
+Views that publish commands update local state immediately without waiting for the MQTT echo. The display reflects the change on the next `update()` call. When the broker eventually echoes the authoritative state back via `onMqttMessage()`, the view overwrites its local state and sets `_dirty = true` again — self-correcting any drift.
+
+```mermaid
+sequenceDiagram
+    participant User
+    participant View as FanView
+    participant Display
+    participant MQTT as MQTT Broker
+
+    User->>View: onInput(EncoderDelta)
+    View->>View: _speed += step (optimistic)
+    View->>View: _dirty = true
+    View->>MQTT: publish {"set_speed": 4}
+    View->>Display: update() → drawFull() (shows new speed immediately)
+    MQTT-->>View: onMqttMessage(fan/bedroom/state, {"speed": 4})
+    View->>View: _speed = 4, _dirty = true (confirms or corrects)
+```
+
+LightView additionally rate-limits publishes to one per 150 ms during fast encoder spin. The display always updates immediately; only the MQTT publish is throttled.
+
+### Modal Encoder — LightView
+
+LightView uses a two-mode encoder where the physical encoder controls different parameters depending on the current mode. Mode is sticky — entering color temp mode requires a deliberate touch hold, and exiting requires a tap.
+
+```mermaid
+stateDiagram-v2
+    [*] --> Brightness
+
+    Brightness --> ColorTemp : TouchHoldStart (>500ms)
+    ColorTemp --> Brightness : TouchTap
+    Brightness --> Brightness : onActivate / onDeactivate (reset)
+    ColorTemp --> Brightness : onActivate / onDeactivate (reset)
+
+    note right of Brightness : encoder → ±16 brightness (0–255)
+    note right of ColorTemp : encoder → ±10 mireds (200–370)
+```
+
+`TouchHoldEnd` is intentionally ignored — mode persists after releasing. This prevents accidental mode exit from hand tremor during a hold gesture. The encoder is ignored entirely when the light is off.
 
 ---
 
-## Implementation Sequence
+## Connectivity Resilience
 
-| Step | What | Verifiable At |
-|---|---|---|
-| 1 | Create `Config.h`, `InputEvent.h` (header-only) | Compiles |
-| 2 | Create `Graphics.h/.cpp` — extract `drawColorWheelFrame`, `drawTempArc`, parameterize | Compiles, visual test on device |
-| 3 | Create `DisplayManager.h/.cpp` — thin wrapper + page dots + status overlay | Compiles |
-| 4 | Create `DeviceView.h` — abstract base class | Compiles |
-| 5 | Create `ConnectivityManager.h/.cpp` — extract WiFi/MQTT from setup()/loop() | WiFi connects, MQTT connects, backoff works |
-| 6 | Create `WaterHeaterView.h/.cpp` — port existing logic into view interface | **Identical behavior to current monolith** |
-| 7 | Rewrite `.ino` — 5-step loop, wire subsystems | Full regression: temp display, arc, pump animation, button, reconnect |
-| 8 | Create `Navigator.h/.cpp` — swipe detection, view switching, page dots | Swipe between views (water heater only initially) |
-| 9 | Create `FanView.h/.cpp` | Fan control works via MQTT |
-| 10 | Create `LightView.h/.cpp` with modal encoder | Light control + color temp mode works |
-| 11 | Update HA automations | Separate pub topic for water/recirc, new automations for fan/light |
+`ConnectivityManager::tick()` runs every `loop()` iteration. It manages WiFi and MQTT as two independent recovery tracks. When either is down, `tick()` returns `false` and the coordinator freezes the UI with a status overlay — no input dispatch, no rendering.
 
-**Steps 1–7 produce identical behavior to the current monolith.** This is a safe incremental migration — verify at step 7 before adding new features.
+### WiFi Recovery
+
+WiFi is polled every 5 seconds (`WIFI_CHECK_INTERVAL_MS`). On disconnect, `WiFi.reconnect()` is called immediately with no backoff — the ESP32 SDK handles this non-blockingly.
+
+```mermaid
+flowchart TD
+    A[tick called] --> B{5s since last check?}
+    B -- no --> Z[skip WiFi check]
+    B -- yes --> C{WiFi.status == UP?}
+    C -- yes, was down --> D[_wifiConnected = true]
+    C -- yes, was up --> Z
+    C -- no --> E[WiFi.reconnect]
+    E --> F[_status = WifiLost]
+    F --> G[return false → show overlay]
+```
+
+### MQTT Recovery — Exponential Backoff
+
+MQTT reconnect uses exponential backoff starting at 2 s, doubling on each failure, capped at 30 s. On success, the interval resets and all views re-subscribe.
+
+```mermaid
+sequenceDiagram
+    participant CM as ConnectivityManager
+    participant Broker as MQTT Broker
+    participant Views as All Views
+
+    Note over CM: _mqttRetryInterval = 2000ms
+
+    CM->>Broker: connect("M5DialClient-a3f2")
+    Broker-->>CM: connection refused
+    Note over CM: _mqttRetryInterval = 4000ms
+
+    CM->>Broker: connect("M5DialClient-7b01")
+    Broker-->>CM: connection refused
+    Note over CM: _mqttRetryInterval = 8000ms
+
+    CM->>Broker: connect("M5DialClient-e4d9")
+    Broker-->>CM: connected
+    Note over CM: _mqttRetryInterval reset to 2000ms
+
+    CM->>Views: onMqttConnected(mqtt) on each view
+    Views->>Broker: subscribe(topic1), subscribe(topic2), ...
+```
+
+Each reconnect attempt uses a random client ID (`"M5DialClient-" + hex(random(0xffff))`) to avoid broker-side session conflicts after a dirty disconnect.
+
+| Attempt | Wait before retry |
+| --- | --- |
+| 1 | 2 s |
+| 2 | 4 s |
+| 3 | 8 s |
+| 4 | 16 s |
+| 5+ | 30 s (capped) |
+
+### No Hardware Watchdog
+
+There is no `esp_task_wdt` configuration. If the main loop hangs (e.g., blocking I2C inside `M5Dial.update()`), recovery requires a power cycle.
 
 ---
 
-## Verification Plan
+## Input Dispatch Chain
 
-1. **After step 7:** Flash device, verify water heater temp display, arc colors, pump animation, button publish, WiFi/MQTT reconnect with backoff — all identical to current behavior
-2. **After step 8:** Verify swipe left/right navigates (single view wraps or no-ops), page dots render
-3. **After steps 9–10:** Publish test MQTT messages to fan/light topics, verify display updates, encoder/button/hold interactions
-4. **Throughout:** Serial monitor for MQTT connect/disconnect/backoff messages, verify no heap fragmentation with `ESP.getFreeHeap()`
+Touch state is read exactly once per loop and shared by reference. This preserves one-shot flags (`wasFlicked()`, `wasClicked()`) that would be consumed on a second read.
 
----
+```mermaid
+flowchart TD
+    HW[M5Dial.update] --> T[touch = Touch.getDetail — read once]
+    T --> NAV{Navigator: wasFlicked?}
+    NAV -- yes, distanceX > 40px --> SW[switchTo: onDeactivate → onActivate]
+    NAV -- no --> PI[pollInput]
+    PI --> BTN{BtnA pressed/double/hold?}
+    BTN -- yes --> EV1[InputEvent: Button*]
+    BTN -- no --> ENC{Encoder ≠ 0?}
+    ENC -- yes --> EV2[InputEvent: EncoderDelta]
+    ENC -- no --> TCH{Touch hold/tap?}
+    TCH -- yes --> EV3[InputEvent: Touch*]
+    TCH -- no --> NONE[InputType::None]
+    EV1 --> DISP[activeView.onInput]
+    EV2 --> DISP
+    EV3 --> DISP
+    NONE --> SKIP[skip onInput]
+    DISP --> UPD[activeView.update]
+    SKIP --> UPD
+    UPD --> DOTS[drawPageDots]
+```
 
-## Navigation and UX
+**Swipe isolation:** `InputType` has no swipe variant. Navigator consumes flick gestures before `pollInput()` runs, and `pollInput()` never checks `wasFlicked()`. Swipes cannot reach views — enforced at the type level.
 
-View order (swipe left to right): Water Heater → Fan → Light → Settings
+**Button/touch mutual exclusion:** All touch logic in `pollInput()` is guarded by `!BtnA.isPressed()`. Pressing the physical button contacts the capacitive screen; the guard prevents phantom touch events.
 
----
-
-## Files Modified
-
-| File | Notes |
-|---|---|
-| `WaterHeaterView.h` / `.cpp` | Port of existing logic |
-| `FanView.h` / `.cpp` | New — fan speed and direction control |
-| `LightView.h` / `.cpp` | New — brightness and color temp (modal encoder) |
-| `SettingsView.h` / `.cpp` | New — settings view (brightness control) |
+**Touch hold detection:** M5Unified's built-in hold requires perfectly still contact, which is impractical on the small screen. The coordinator uses its own time-based detection: track `isPressed()` duration against a 500 ms threshold, fire `TouchHoldStart` when exceeded, fire `TouchHoldEnd` on release. The 4-count encoder accumulator (`_encoderAccum / 4`) in views smooths sub-detent noise so one physical click produces exactly one step.

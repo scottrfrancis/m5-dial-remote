@@ -89,6 +89,27 @@ void drawPageDots(M5GFX&  gfx,
                   int     spacing);
 
 // ---------------------------------------------------------------------------
+// Speed bar chart
+// ---------------------------------------------------------------------------
+
+// Draw a horizontal row of 6 rectangular speed-indicator bars.
+//
+//   speed         current fan speed, 0–6. Bars 1..speed are filled; rest are outlines.
+//   dirForward    true = forward/up (green→red palette)
+//                 false = reverse/down (blue→yellow palette)
+//   cx, cy        center of the bar group
+//   barW, barH    width and height of each bar in pixels
+//   gap           horizontal gap between bars
+void drawSpeedBars(M5GFX&  gfx,
+                   uint8_t speed,
+                   bool    dirForward,
+                   int     cx,
+                   int     cy,
+                   int     barW = 16,
+                   int     barH = 28,
+                   int     gap  = 4);
+
+// ---------------------------------------------------------------------------
 // Arrow
 // ---------------------------------------------------------------------------
 

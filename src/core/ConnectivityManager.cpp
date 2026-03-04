@@ -8,7 +8,9 @@
 IPAddress ConnectivityManager::beginBlocking(const char* ssid,
                                               const char* password,
                                               const char* broker,
-                                              uint16_t    port) {
+                                              uint16_t    port,
+                                              long        gmtOffset_sec,
+                                              int         dstOffset_sec) {
   Serial.print("Connecting WiFi");
 
   WiFi.begin(ssid, password);
@@ -21,6 +23,10 @@ IPAddress ConnectivityManager::beginBlocking(const char* ssid,
 
   IPAddress ip = WiFi.localIP();
   Serial.println(ip);
+
+  // Configure NTP — getLocalTime() will sync asynchronously
+  configTime(gmtOffset_sec, dstOffset_sec, "pool.ntp.org");
+  Serial.println("NTP configured");
 
   _mqtt.setServer(broker, port);
 

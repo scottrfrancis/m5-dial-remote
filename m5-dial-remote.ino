@@ -13,18 +13,20 @@
 #include "src/core/DisplayManager.h"
 #include "src/core/Navigator.h"
 
+#include "src/views/DashboardView.h"
 #include "src/views/WaterHeaterView.h"
 #include "src/views/FanView.h"
 #include "src/views/LightView.h"
 #include "src/views/SettingsView.h"
 
 // --- Static view instances (no dynamic allocation) ---
+static DashboardView   dashboardView;
 static WaterHeaterView waterHeaterView;
 static FanView         fanView;
 static LightView       lightView;
 static SettingsView    settingsView;
 
-static DeviceView* views[] = { &waterHeaterView, &fanView, &lightView, &settingsView };
+static DeviceView* views[] = { &dashboardView, &waterHeaterView, &fanView, &lightView, &settingsView };
 static constexpr uint8_t VIEW_COUNT = sizeof(views) / sizeof(views[0]);
 
 // --- Subsystems ---
@@ -113,7 +115,8 @@ void setup() {
 
   // Show status BEFORE blocking — device is useless without network
   displayMgr.drawStatusOverlay("Connecting WiFi");
-  IPAddress ip = connectivity.beginBlocking(ssid, password, mqtt_server, 1883);
+  IPAddress ip = connectivity.beginBlocking(ssid, password, mqtt_server, 1883,
+                                             tz_offset_sec, dst_offset_sec);
 
   // Show IP briefly so the user can confirm network identity
   displayMgr.clear();
